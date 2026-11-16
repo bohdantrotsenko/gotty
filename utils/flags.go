@@ -1,59 +1,64 @@
 package utils
 
 import (
-	"io/ioutil"
 	"log"
 	"os"
 	"reflect"
 	"strings"
 
-	"github.com/fatih/structs"
-	"github.com/urfave/cli"
-	"github.com/yudai/hcl"
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/gohcl"
+	"github.com/hashicorp/hcl/v2/hclparse"
+	"github.com/urfave/cli/v2"
 
 	"github.com/ghthor/gotty/v2/pkg/homedir"
 )
 
-func GenerateFlags(options ...interface{}) (flags []cli.Flag, mappings map[string]string, err error) {
+func GenerateFlags(options ...any) (flags []cli.Flag, mappings map[string]string, err error) {
 	mappings = make(map[string]string)
 
 	for _, struct_ := range options {
-		o := structs.New(struct_)
-		for _, field := range o.Fields() {
-			flagName := field.Tag("flagName")
+		v := reflect.ValueOf(struct_).Elem()
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			field, structField := v.Field(i), t.Field(i)
+			flagName := structField.Tag.Get("flagName")
 			if flagName == "" {
 				continue
 			}
-			envName := "GOTTY_" + strings.ToUpper(strings.Join(strings.Split(flagName, "-"), "_"))
-			mappings[flagName] = field.Name()
+			envName := "GOTTY_" + strings.ToUpper(strings.ReplaceAll(flagName, "-", "_"))
+			mappings[flagName] = structField.Name
 
-			flagShortName := field.Tag("flagSName")
-			if flagShortName != "" {
-				flagName += ", " + flagShortName
+			var aliases []string
+			if flagShortName := structField.Tag.Get("flagSName"); flagShortName != "" {
+				aliases = []string{flagShortName}
 			}
 
-			flagDescription := field.Tag("flagDescribe")
+			flagDescription := structField.Tag.Get("flagDescribe")
 
 			switch field.Kind() {
 			case reflect.String:
-				flags = append(flags, cli.StringFlag{
-					Name:   flagName,
-					Value:  field.Value().(string),
-					Usage:  flagDescription,
-					EnvVar: envName,
+				flags = append(flags, &cli.StringFlag{
+					Name:    flagName,
+					Aliases: aliases,
+					Value:   field.String(),
+					Usage:   flagDescription,
+					EnvVars: []string{envName},
 				})
 			case reflect.Bool:
-				flags = append(flags, cli.BoolFlag{
-					Name:   flagName,
-					Usage:  flagDescription,
-					EnvVar: envName,
+				flags = append(flags, &cli.BoolFlag{
+					Name:    flagName,
+					Aliases: aliases,
+					Usage:   flagDescription,
+					EnvVars: []string{envName},
 				})
 			case reflect.Int:
-				flags = append(flags, cli.IntFlag{
-					Name:   flagName,
-					Value:  field.Value().(int),
-					Usage:  flagDescription,
-					EnvVar: envName,
+				flags = append(flags, &cli.IntFlag{
+					Name:    flagName,
+					Aliases: aliases,
+					Value:   int(field.Int()),
+					Usage:   flagDescription,
+					EnvVars: []string{envName},
 				})
 			}
 		}
@@ -66,59 +71,71 @@ func ApplyFlags(
 	flags []cli.Flag,
 	mappingHint map[string]string,
 	c *cli.Context,
-	options ...interface{},
+	options ...any,
 ) {
-	objects := make([]*structs.Struct, len(options))
+	values := make([]reflect.Value, len(options))
 	for i, struct_ := range options {
-		objects[i] = structs.New(struct_)
+		values[i] = reflect.ValueOf(struct_).Elem()
 	}
 
 	for flagName, fieldName := range mappingHint {
 		if !c.IsSet(flagName) {
 			continue
 		}
-		var field *structs.Field
-		var ok bool
-		for _, o := range objects {
-			field, ok = o.FieldOk(fieldName)
-			if ok {
+		var field reflect.Value
+		found := false
+		for _, v := range values {
+			if f := v.FieldByName(fieldName); f.IsValid() && f.CanSet() {
+				field, found = f, true
 				break
 			}
 		}
-		if field == nil {
+		if !found {
 			continue
 		}
-		var val interface{}
 		switch field.Kind() {
 		case reflect.String:
-			val = c.String(flagName)
+			field.SetString(c.String(flagName))
 		case reflect.Bool:
-			val = c.Bool(flagName)
+			field.SetBool(c.Bool(flagName))
 		case reflect.Int:
-			val = c.Int(flagName)
+			field.SetInt(int64(c.Int(flagName)))
 		}
-		field.Set(val)
 	}
 }
 
-func ApplyConfigFile(filePath string, options ...interface{}) error {
+func ApplyConfigFile(filePath string, options ...any) error {
 	filePath = homedir.Expand(filePath)
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return err
 	}
 
-	fileString := []byte{}
 	log.Printf("Loading config file at: %s", filePath)
-	fileString, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		return err
+	parser := hclparse.NewParser()
+	file, diags := parser.ParseHCLFile(filePath)
+	if diags.HasErrors() {
+		return diags
 	}
 
 	for _, object := range options {
-		if err := hcl.Decode(object, string(fileString)); err != nil {
-			return err
+		if diags := gohcl.DecodeBody(lenientBody{file.Body}, nil, object); diags.HasErrors() {
+			return diags
 		}
 	}
 
 	return nil
+}
+
+// lenientBody wraps an hcl.Body so that gohcl.DecodeBody only sees the
+// attributes and blocks declared in the target's schema. Undeclared items
+// are ignored instead of raising "unsupported argument" diagnostics,
+// matching the lenient behavior of hcl v1's hcl.Decode (the same config
+// file is decoded into several option structs).
+type lenientBody struct {
+	hcl.Body
+}
+
+func (b lenientBody) Content(schema *hcl.BodySchema) (*hcl.BodyContent, hcl.Diagnostics) {
+	content, _, diags := b.Body.PartialContent(schema)
+	return content, diags
 }

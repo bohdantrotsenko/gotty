@@ -21,8 +21,8 @@ type testSlave struct {
 	*io.PipeWriter
 }
 
-func (testSlave) WindowTitleVariables() map[string]interface{} { return nil }
-func (testSlave) ResizeTerminal(columns int, rows int) error   { return nil }
+func (testSlave) WindowTitleVariables() map[string]any       { return nil }
+func (testSlave) ResizeTerminal(columns int, rows int) error { return nil }
 
 // runWebTTY starts Run in a goroutine and returns a channel that
 // receives its result once the given pipes are closed and the context

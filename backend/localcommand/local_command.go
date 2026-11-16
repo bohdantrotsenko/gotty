@@ -2,14 +2,13 @@ package localcommand
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
 	"time"
-	"unsafe"
 
-	"github.com/kr/pty"
-	"github.com/pkg/errors"
+	"github.com/creack/pty"
 )
 
 const (
@@ -35,7 +34,7 @@ func New(ctx context.Context, command string, argv []string, options ...Option) 
 	pty, err := pty.Start(cmd)
 	if err != nil {
 		// todo close cmd?
-		return nil, errors.Wrapf(err, "failed to start command `%s`", command)
+		return nil, fmt.Errorf("failed to start command `%s`: %w", command, err)
 	}
 	ptyClosed := make(chan struct{})
 
@@ -81,18 +80,19 @@ func (lcmd *LocalCommand) Close() error {
 	if lcmd.cmd != nil && lcmd.cmd.Process != nil {
 		lcmd.cmd.Process.Signal(lcmd.closeSignal)
 	}
+	timeout := lcmd.closeTimeoutC()
 	for {
 		select {
 		case <-lcmd.ptyClosed:
 			return nil
-		case <-lcmd.closeTimeoutC():
+		case <-timeout:
 			lcmd.cmd.Process.Signal(syscall.SIGKILL)
 		}
 	}
 }
 
-func (lcmd *LocalCommand) WindowTitleVariables() map[string]interface{} {
-	return map[string]interface{}{
+func (lcmd *LocalCommand) WindowTitleVariables() map[string]any {
+	return map[string]any{
 		"command": lcmd.command,
 		"argv":    lcmd.argv,
 		"pid":     lcmd.cmd.Process.Pid,
@@ -100,28 +100,10 @@ func (lcmd *LocalCommand) WindowTitleVariables() map[string]interface{} {
 }
 
 func (lcmd *LocalCommand) ResizeTerminal(width int, height int) error {
-	window := struct {
-		row uint16
-		col uint16
-		x   uint16
-		y   uint16
-	}{
-		uint16(height),
-		uint16(width),
-		0,
-		0,
-	}
-	_, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		lcmd.pty.Fd(),
-		syscall.TIOCSWINSZ,
-		uintptr(unsafe.Pointer(&window)),
-	)
-	if errno != 0 {
-		return errno
-	} else {
-		return nil
-	}
+	return pty.Setsize(lcmd.pty, &pty.Winsize{
+		Cols: uint16(width),
+		Rows: uint16(height),
+	})
 }
 
 func (lcmd *LocalCommand) closeTimeoutC() <-chan time.Time {

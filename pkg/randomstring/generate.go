@@ -3,16 +3,21 @@ package randomstring
 import (
 	"crypto/rand"
 	"math/big"
-	"strconv"
 )
 
+const letters = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+// Generate returns a cryptographically random base36 string of the given
+// length. It panics if the system random source fails, which is unrecoverable.
 func Generate(length int) string {
-	const base = 36
-	size := big.NewInt(base)
 	n := make([]byte, length)
-	for i, _ := range n {
-		c, _ := rand.Int(rand.Reader, size)
-		n[i] = strconv.FormatInt(c.Int64(), base)[0]
+	max := big.NewInt(int64(len(letters)))
+	for i := range n {
+		c, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			panic(err)
+		}
+		n[i] = letters[c.Int64()]
 	}
 	return string(n)
 }

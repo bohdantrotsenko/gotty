@@ -2,14 +2,18 @@ package server
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type counter struct {
-	duration    time.Duration
-	zeroTimer   *time.Timer
-	wg          sync.WaitGroup
-	connections int
+	duration  time.Duration
+	zeroTimer *time.Timer
+	wg        sync.WaitGroup
+
+	// connections is the number of currently open connections.
+	// The timer operations are serialized by mutex, the count is atomic.
+	connections atomic.Int64
 	mutex       sync.Mutex
 }
 
@@ -30,35 +34,30 @@ func newCounter(duration time.Duration) *counter {
 
 func (counter *counter) add(n int) int {
 	counter.mutex.Lock()
-	defer counter.mutex.Unlock()
-
 	if counter.duration > 0 {
 		counter.zeroTimer.Stop()
 	}
-	counter.wg.Add(n)
-	counter.connections += n
+	counter.mutex.Unlock()
 
-	return counter.connections
+	counter.wg.Add(n)
+	return int(counter.connections.Add(int64(n)))
 }
 
 func (counter *counter) done() int {
-	counter.mutex.Lock()
-	defer counter.mutex.Unlock()
-
-	counter.connections--
+	n := int(counter.connections.Add(-1))
 	counter.wg.Done()
-	if counter.connections == 0 && counter.duration > 0 {
+
+	counter.mutex.Lock()
+	if n == 0 && counter.duration > 0 {
 		counter.zeroTimer.Reset(counter.duration)
 	}
+	counter.mutex.Unlock()
 
-	return counter.connections
+	return n
 }
 
 func (counter *counter) count() int {
-	counter.mutex.Lock()
-	defer counter.mutex.Unlock()
-
-	return counter.connections
+	return int(counter.connections.Load())
 }
 
 func (counter *counter) wait() {

@@ -2,40 +2,42 @@ package utils
 
 import (
 	"fmt"
-	"github.com/fatih/structs"
 	"reflect"
 	"strconv"
 )
 
-func ApplyDefaultValues(struct_ interface{}) (err error) {
-	o := structs.New(struct_)
+func ApplyDefaultValues(struct_ any) error {
+	v := reflect.ValueOf(struct_).Elem()
+	t := v.Type()
 
-	for _, field := range o.Fields() {
-		defaultValue := field.Tag("default")
+	for i := 0; i < v.NumField(); i++ {
+		field, structField := v.Field(i), t.Field(i)
+		if !field.CanSet() {
+			continue
+		}
+		defaultValue := structField.Tag.Get("default")
 		if defaultValue == "" {
 			continue
 		}
-		var val interface{}
 		switch field.Kind() {
 		case reflect.String:
-			val = defaultValue
+			field.SetString(defaultValue)
 		case reflect.Bool:
-			if defaultValue == "true" {
-				val = true
-			} else if defaultValue == "false" {
-				val = false
-			} else {
+			switch defaultValue {
+			case "true":
+				field.SetBool(true)
+			case "false":
+				field.SetBool(false)
+			default:
 				return fmt.Errorf("invalid bool expression: %v, use true/false", defaultValue)
 			}
 		case reflect.Int:
-			val, err = strconv.Atoi(defaultValue)
+			val, err := strconv.Atoi(defaultValue)
 			if err != nil {
 				return err
 			}
-		default:
-			val = field.Value()
+			field.SetInt(int64(val))
 		}
-		field.Set(val)
 	}
 	return nil
 }

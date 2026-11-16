@@ -7,11 +7,10 @@ USAGE:
    {{.Name}} [options] <command> [<arguments...>]
 
 VERSION:
-   {{.Version}}{{if or .Author .Email}}
+   {{.Version}}{{if .Authors}}
 
-AUTHOR:{{if .Author}}
-  {{.Author}}{{if .Email}} - <{{.Email}}>{{end}}{{else}}
-  {{.Email}}{{end}}{{end}}
+AUTHOR:{{range .Authors}}
+  {{.Name}}{{if .Email}} - <{{.Email}}>{{end}}{{end}}{{end}}
 
 OPTIONS:
    {{range .Flags}}{{.}}

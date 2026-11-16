@@ -4,19 +4,20 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"fmt"
 	"html/template"
-	"io/ioutil"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	noesctmpl "text/template"
 	"time"
 
 	"github.com/NYTimes/gziphandler"
-	assetfs "github.com/elazarl/go-bindata-assetfs"
 	"github.com/gorilla/websocket"
-	"github.com/pkg/errors"
 
 	"github.com/ghthor/gotty/v2/pkg/homedir"
 	"github.com/ghthor/gotty/v2/pkg/randomstring"
@@ -36,15 +37,15 @@ type Server struct {
 // New creates a new instance of Server.
 // Server will use the New() of the factory provided to handle each request.
 func New(factory Factory, options *Options) (*Server, error) {
-	indexData, err := Asset("static/index.html")
+	indexData, err := fs.ReadFile(staticFS, "static/index.html")
 	if err != nil {
-		panic("index not found") // must be in bindata
+		panic("index not found") // embedded at compile time
 	}
 	if options.IndexFile != "" {
 		path := homedir.Expand(options.IndexFile)
-		indexData, err = ioutil.ReadFile(path)
+		indexData, err = os.ReadFile(path)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to read custom index file at `%s`", path)
+			return nil, fmt.Errorf("failed to read custom index file at `%s`: %w", path, err)
 		}
 	}
 	indexTemplate, err := template.New("index").Parse(string(indexData))
@@ -54,14 +55,14 @@ func New(factory Factory, options *Options) (*Server, error) {
 
 	titleTemplate, err := noesctmpl.New("title").Parse(options.TitleFormat)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to parse window title format `%s`", options.TitleFormat)
+		return nil, fmt.Errorf("failed to parse window title format `%s`: %w", options.TitleFormat, err)
 	}
 
 	var originChekcer func(r *http.Request) bool
 	if options.WSOrigin != "" {
 		matcher, err := regexp.Compile(options.WSOrigin)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to compile regular expression of Websocket Origin: %s", options.WSOrigin)
+			return nil, fmt.Errorf("failed to compile regular expression of Websocket Origin: %w: %s", err, options.WSOrigin)
 		}
 		originChekcer = func(r *http.Request) bool {
 			return matcher.MatchString(r.Header.Get("Origin"))
@@ -103,7 +104,7 @@ func (server *Server) Run(ctx context.Context, options ...RunOption) error {
 	handlers := server.setupHandlers(cctx, cancel, path, counter)
 	srv, err := server.setupHTTPServer(handlers)
 	if err != nil {
-		return errors.Wrapf(err, "failed to setup an HTTP server")
+		return fmt.Errorf("failed to setup an HTTP server: %w", err)
 	}
 
 	if server.options.PermitWrite {
@@ -122,7 +123,7 @@ func (server *Server) Run(ctx context.Context, options ...RunOption) error {
 	if listener == nil {
 		listener, err = net.Listen("tcp", hostPort)
 		if err != nil {
-			return errors.Wrapf(err, "failed to listen at `%s`", hostPort)
+			return fmt.Errorf("failed to listen at `%s`: %w", hostPort, err)
 		}
 	}
 
@@ -185,18 +186,20 @@ func (server *Server) Run(ctx context.Context, options ...RunOption) error {
 }
 
 func (server *Server) setupHandlers(ctx context.Context, cancel context.CancelFunc, pathPrefix string, counter *counter) http.Handler {
-	staticFileHandler := http.FileServer(
-		&assetfs.AssetFS{Asset: Asset, AssetDir: AssetDir, Prefix: "static"},
-	)
+	staticFSSub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		panic("static assets not found") // embedded at compile time
+	}
+	staticFileHandler := http.FileServer(http.FS(staticFSSub))
 
 	var siteMux = http.NewServeMux()
-	siteMux.HandleFunc(pathPrefix, server.handleIndex)
-	siteMux.Handle(pathPrefix+"js/", http.StripPrefix(pathPrefix, staticFileHandler))
-	siteMux.Handle(pathPrefix+"favicon.png", http.StripPrefix(pathPrefix, staticFileHandler))
-	siteMux.Handle(pathPrefix+"css/", http.StripPrefix(pathPrefix, staticFileHandler))
+	siteMux.HandleFunc("GET "+pathPrefix, server.handleIndex)
+	siteMux.Handle("GET "+pathPrefix+"js/", http.StripPrefix(pathPrefix, staticFileHandler))
+	siteMux.Handle("GET "+pathPrefix+"favicon.png", http.StripPrefix(pathPrefix, staticFileHandler))
+	siteMux.Handle("GET "+pathPrefix+"css/", http.StripPrefix(pathPrefix, staticFileHandler))
 
-	siteMux.HandleFunc(pathPrefix+"auth_token.js", server.handleAuthToken)
-	siteMux.HandleFunc(pathPrefix+"config.js", server.handleConfig)
+	siteMux.HandleFunc("GET "+pathPrefix+"auth_token.js", server.handleAuthToken)
+	siteMux.HandleFunc("GET "+pathPrefix+"config.js", server.handleConfig)
 
 	siteHandler := http.Handler(siteMux)
 
@@ -210,7 +213,7 @@ func (server *Server) setupHandlers(ctx context.Context, cancel context.CancelFu
 
 	wsMux := http.NewServeMux()
 	wsMux.Handle("/", siteHandler)
-	wsMux.HandleFunc(pathPrefix+"ws", server.generateHandleWS(ctx, cancel, counter))
+	wsMux.HandleFunc("GET "+pathPrefix+"ws", server.generateHandleWS(ctx, cancel, counter))
 	siteHandler = http.Handler(wsMux)
 
 	return siteHandler
@@ -218,13 +221,14 @@ func (server *Server) setupHandlers(ctx context.Context, cancel context.CancelFu
 
 func (server *Server) setupHTTPServer(handler http.Handler) (*http.Server, error) {
 	srv := &http.Server{
-		Handler: handler,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	if server.options.EnableTLSClientAuth {
 		tlsConfig, err := server.tlsConfig()
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to setup TLS configuration")
+			return nil, fmt.Errorf("failed to setup TLS configuration: %w", err)
 		}
 		srv.TLSConfig = tlsConfig
 	}
@@ -234,15 +238,16 @@ func (server *Server) setupHTTPServer(handler http.Handler) (*http.Server, error
 
 func (server *Server) tlsConfig() (*tls.Config, error) {
 	caFile := homedir.Expand(server.options.TLSCACrtFile)
-	caCert, err := ioutil.ReadFile(caFile)
+	caCert, err := os.ReadFile(caFile)
 	if err != nil {
-		return nil, errors.New("could not open CA crt file " + caFile)
+		return nil, fmt.Errorf("could not open CA crt file %s: %w", caFile, err)
 	}
 	caCertPool := x509.NewCertPool()
 	if !caCertPool.AppendCertsFromPEM(caCert) {
 		return nil, errors.New("could not parse CA crt file data in " + caFile)
 	}
 	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
 		ClientCAs:  caCertPool,
 		ClientAuth: tls.RequireAndVerifyClientCert,
 	}

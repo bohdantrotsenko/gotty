@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 	"sync/atomic"
 
 	"github.com/gorilla/websocket"
-	"github.com/pkg/errors"
 
 	"github.com/ghthor/gotty/v2/webtty"
 )
@@ -24,7 +24,7 @@ func zeroAsInfinity(format string, v int) string {
 }
 
 func (server *Server) generateHandleWS(ctx context.Context, cancel context.CancelFunc, counter *counter) http.HandlerFunc {
-	once := new(int64)
+	var once atomic.Bool
 
 	go func() {
 		select {
@@ -36,8 +36,7 @@ func (server *Server) generateHandleWS(ctx context.Context, cancel context.Cance
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if server.options.Once {
-			success := atomic.CompareAndSwapInt64(once, 0, 1)
-			if !success {
+			if !once.CompareAndSwap(false, true) {
 				http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
 				return
 			}
@@ -70,11 +69,6 @@ func (server *Server) generateHandleWS(ctx context.Context, cancel context.Cance
 			r.RemoteAddr, num, zeroAsInfinity("%d", server.options.MaxConnection),
 		)
 
-		if r.Method != "GET" {
-			http.Error(w, "Method not allowed", 405)
-			return
-		}
-
 		conn, err := server.upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			closeReason = err.Error()
@@ -100,7 +94,7 @@ func (server *Server) generateHandleWS(ctx context.Context, cancel context.Cance
 func (server *Server) processWSConn(ctx context.Context, conn *websocket.Conn) error {
 	typ, initLine, err := conn.ReadMessage()
 	if err != nil {
-		return errors.Wrapf(err, "failed to authenticate websocket connection")
+		return fmt.Errorf("failed to authenticate websocket connection: %w", err)
 	}
 	if typ != websocket.TextMessage {
 		return errors.New("failed to authenticate websocket connection: invalid message type")
@@ -109,7 +103,7 @@ func (server *Server) processWSConn(ctx context.Context, conn *websocket.Conn) e
 	var init InitMessage
 	err = json.Unmarshal(initLine, &init)
 	if err != nil {
-		return errors.Wrapf(err, "failed to authenticate websocket connection")
+		return fmt.Errorf("failed to authenticate websocket connection: %w", err)
 	}
 	if init.AuthToken != server.options.Credential {
 		return errors.New("failed to authenticate websocket connection")
@@ -122,22 +116,22 @@ func (server *Server) processWSConn(ctx context.Context, conn *websocket.Conn) e
 
 	query, err := url.Parse(queryPath)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse arguments")
+		return fmt.Errorf("failed to parse arguments: %w", err)
 	}
 	params := query.Query()
 
 	var slave Slave
 	slave, err = server.factory.New(ctx, params, conn)
 	if err != nil {
-		return errors.Wrapf(err, "failed to create backend")
+		return fmt.Errorf("failed to create backend: %w", err)
 	}
 	defer slave.Close()
 
 	titleVars := server.titleVariables(
 		[]string{"server", "master", "slave"},
-		map[string]map[string]interface{}{
+		map[string]map[string]any{
 			"server": server.options.TitleVariables,
-			"master": map[string]interface{}{
+			"master": map[string]any{
 				"remote_addr": conn.RemoteAddr(),
 			},
 			"slave": slave.WindowTitleVariables(),
@@ -147,7 +141,7 @@ func (server *Server) processWSConn(ctx context.Context, conn *websocket.Conn) e
 	titleBuf := new(bytes.Buffer)
 	err = server.titleTemplate.Execute(titleBuf, titleVars)
 	if err != nil {
-		return errors.Wrapf(err, "failed to fill window title template")
+		return fmt.Errorf("failed to fill window title template: %w", err)
 	}
 
 	opts := []webtty.Option{
@@ -171,7 +165,7 @@ func (server *Server) processWSConn(ctx context.Context, conn *websocket.Conn) e
 
 	tty, err := webtty.New(&wsWrapper{conn}, slave, opts...)
 	if err != nil {
-		return errors.Wrapf(err, "failed to create webtty")
+		return fmt.Errorf("failed to create webtty: %w", err)
 	}
 
 	err = tty.Run(ctx)
@@ -185,9 +179,9 @@ func (server *Server) processWSConn(ctx context.Context, conn *websocket.Conn) e
 func (server *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	titleVars := server.titleVariables(
 		[]string{"server", "master"},
-		map[string]map[string]interface{}{
+		map[string]map[string]any{
 			"server": server.options.TitleVariables,
-			"master": map[string]interface{}{
+			"master": map[string]any{
 				"remote_addr": r.RemoteAddr,
 			},
 		},
@@ -200,7 +194,7 @@ func (server *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	indexVars := map[string]interface{}{
+	indexVars := map[string]any{
 		"title": titleBuf.String(),
 	}
 
@@ -227,8 +221,8 @@ func (server *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // titleVariables merges maps in a specified order.
 // varUnits are name-keyed maps, whose names will be iterated using order.
-func (server *Server) titleVariables(order []string, varUnits map[string]map[string]interface{}) map[string]interface{} {
-	titleVars := map[string]interface{}{}
+func (server *Server) titleVariables(order []string, varUnits map[string]map[string]any) map[string]any {
+	titleVars := map[string]any{}
 
 	for _, name := range order {
 		vars, ok := varUnits[name]

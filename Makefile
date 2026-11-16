@@ -6,48 +6,41 @@ BUILD_OPTIONS = -ldflags "-X main.Version=$(VERSION) -X main.CommitID=$(GIT_COMM
 gotty: main.go server/*.go webtty/*.go backend/*.go Makefile
 	go build ${BUILD_OPTIONS}
 
-server/asset.go: bindata/static/js/gotty-bundle.js bindata/static/js/gotty-bundle.js.map bindata/static/js/gotty-bundle.js.LICENSE.txt bindata/static/index.html bindata/static/favicon.png bindata/static/css/index.css bindata/static/css/xterm.css bindata/static/css/xterm_customize.css
-	go-bindata -prefix bindata -pkg server -ignore=\\.gitkeep -o server/asset.go bindata/...
-	gofmt -w server/asset.go
-
 .PHONY: all
-all: server/asset.go gotty
+all: gotty
 
-bindata:
-	mkdir -p bindata
+server/static:
+	mkdir -p server/static
 
-bindata/static: bindata
-	mkdir -p bindata/static
+server/static/index.html: server/static resources/index.html
+	cp resources/index.html server/static/index.html
 
-bindata/static/index.html: bindata/static resources/index.html
-	cp resources/index.html bindata/static/index.html
+server/static/favicon.png: server/static resources/favicon.png
+	cp resources/favicon.png server/static/favicon.png
 
-bindata/static/favicon.png: bindata/static resources/favicon.png
-	cp resources/favicon.png bindata/static/favicon.png
-
-bindata/static/js: bindata/static
-	mkdir -p bindata/static/js
+server/static/js: server/static
+	mkdir -p server/static/js
 
 
-bindata/static/js/gotty-bundle.js: bindata/static/js js/dist/gotty-bundle.js
-	cp js/dist/gotty-bundle.js bindata/static/js/gotty-bundle.js
+server/static/js/gotty-bundle.js: server/static/js js/dist/gotty-bundle.js
+	cp js/dist/gotty-bundle.js server/static/js/gotty-bundle.js
 
-bindata/static/js/gotty-bundle.js.LICENSE.txt: js/dist/gotty-bundle.js.LICENSE.txt
+server/static/js/gotty-bundle.js.LICENSE.txt: js/dist/gotty-bundle.js.LICENSE.txt
 	cp $< $@
-bindata/static/js/gotty-bundle.js.map: js/dist/gotty-bundle.js.map
+server/static/js/gotty-bundle.js.map: js/dist/gotty-bundle.js.map
 	cp $< $@
 
-bindata/static/css: bindata/static
-	mkdir -p bindata/static/css
+server/static/css: server/static
+	mkdir -p server/static/css
 
-bindata/static/css/index.css: bindata/static/css resources/index.css
-	cp resources/index.css bindata/static/css/index.css
+server/static/css/index.css: server/static/css resources/index.css
+	cp resources/index.css server/static/css/index.css
 
-bindata/static/css/xterm_customize.css: bindata/static/css resources/xterm_customize.css
-	cp resources/xterm_customize.css bindata/static/css/xterm_customize.css
+server/static/css/xterm_customize.css: server/static/css resources/xterm_customize.css
+	cp resources/xterm_customize.css server/static/css/xterm_customize.css
 
-bindata/static/css/xterm.css: bindata/static/css js/node_modules/@xterm/xterm/css/xterm.css
-	cp js/node_modules/@xterm/xterm/css/xterm.css bindata/static/css/xterm.css
+server/static/css/xterm.css: server/static/css js/node_modules/@xterm/xterm/css/xterm.css
+	cp js/node_modules/@xterm/xterm/css/xterm.css server/static/css/xterm.css
 
 js/node_modules/@xterm/xterm/css/xterm.css:
 	cd js && \
@@ -65,7 +58,6 @@ js/node_modules/webpack:
 		npm install
 
 tools:
-	go install github.com/go-bindata/go-bindata/v3/go-bindata@latest # for static asset management
 	# TODO convert to `go install`
 	go get github.com/mitchellh/gox           # for crosscompiling
 	go get github.com/tcnksm/ghr              # for making gihub releases
@@ -98,4 +90,4 @@ update_go_modules:
 
 .PHONY: clean
 clean:
-	rm -rf bindata/ js/node_modules/*
+	rm -rf js/node_modules/*

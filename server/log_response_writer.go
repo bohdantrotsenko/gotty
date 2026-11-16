@@ -21,3 +21,9 @@ func (w *logResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	w.status = http.StatusSwitchingProtocols
 	return hj.Hijack()
 }
+
+// Unwrap returns the underlying ResponseWriter so that http.ResponseController
+// can reach the wrapped writer's capabilities (e.g. Flush, Hijack).
+func (w *logResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
