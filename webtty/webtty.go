@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"slices"
 	"sync"
-
-	"golang.org/x/sync/errgroup"
 )
 
 // WebTTY bridges a PTY slave and its PTY master.
@@ -67,52 +65,61 @@ func (wt *WebTTY) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to send initializing message: %w", err)
 	}
 
-	grp, grpCtx := errgroup.WithContext(ctx)
-	done := grpCtx.Done()
+	// errCh has capacity for both goroutines, so the goroutine that is
+	// unblocked late (once the caller closes the master/slave) can always
+	// send its result and exit without blocking.
+	errCh := make(chan error, 2)
 
-	grp.Go(func() error {
+	go func() {
 		buffer := make([]byte, wt.bufferSize)
 		for {
 			select {
-			case <-done:
-				return grpCtx.Err()
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
 			default:
 			}
 
 			n, err := wt.slave.Read(buffer)
 			if err != nil {
-				return ErrSlaveClosed
+				errCh <- ErrSlaveClosed
+				return
 			}
 
-			err = wt.handleSlaveReadEvent(buffer[:n])
-			if err != nil {
-				return err
+			if err := wt.handleSlaveReadEvent(buffer[:n]); err != nil {
+				errCh <- err
+				return
 			}
 		}
-	})
+	}()
 
-	grp.Go(func() error {
+	go func() {
 		buffer := make([]byte, wt.bufferSize)
 		for {
 			select {
-			case <-done:
-				return grpCtx.Err()
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
 			default:
 			}
 
 			n, err := wt.masterConn.Read(buffer)
 			if err != nil {
-				return ErrMasterClosed
+				errCh <- ErrMasterClosed
+				return
 			}
 
-			err = wt.handleMasterReadEvent(buffer[:n])
-			if err != nil {
-				return err
+			if err := wt.handleMasterReadEvent(buffer[:n]); err != nil {
+				errCh <- err
+				return
 			}
 		}
-	})
+	}()
 
-	return grp.Wait()
+	// Return as soon as one direction ends. The peer goroutine stays blocked
+	// in its Read until the caller closes that side, which the caller is
+	// responsible for (see the doc comment on Run).
+	return <-errCh
 }
 
 func (wt *WebTTY) sendInitializeMessage() error {

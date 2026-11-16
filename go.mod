@@ -8,7 +8,6 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/urfave/cli/v2 v2.27.7
-	golang.org/x/sync v0.25.0
 )
 
 require (
@@ -23,6 +22,7 @@ require (
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	github.com/zclconf/go-cty v1.19.0 // indirect
 	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 )

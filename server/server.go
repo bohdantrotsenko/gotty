@@ -176,11 +176,24 @@ func (server *Server) Run(ctx context.Context, options ...RunOption) error {
 		err = cctx.Err()
 	}
 
-	conn := counter.count()
-	if conn > 0 {
-		log.Printf("Waiting for %d connections to be closed", conn)
+	// Wait for active connections to close, unless the server was
+	// force-closed (context canceled), in which case return immediately.
+	if cctx.Err() == nil {
+		conn := counter.count()
+		if conn > 0 {
+			log.Printf("Waiting for %d connections to be closed", conn)
+		}
+		waited := make(chan struct{})
+		go func() {
+			counter.wait()
+			close(waited)
+		}()
+		select {
+		case <-waited:
+		case <-cctx.Done():
+			log.Printf("Force closing with %d connections still open", counter.count())
+		}
 	}
-	counter.wait()
 
 	return err
 }

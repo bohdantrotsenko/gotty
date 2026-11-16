@@ -76,7 +76,18 @@ func (server *Server) generateHandleWS(ctx context.Context, cancel context.Cance
 		}
 		defer conn.Close()
 
-		err = server.processWSConn(r.Context(), conn)
+		// The connection is hijacked, so the http.Server will not close it
+		// on shutdown. Close it when the server context is canceled so that
+		// the reads below unblock and this handler can return (force close).
+		go func() {
+			select {
+			case <-ctx.Done():
+				conn.Close()
+			case <-r.Context().Done():
+			}
+		}()
+
+		err = server.processWSConn(ctx, conn)
 
 		switch err {
 		case ctx.Err():
