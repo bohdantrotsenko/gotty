@@ -81,7 +81,7 @@ func main() {
 		}
 
 		hostname, _ := os.Hostname()
-		appOptions.TitleVariables = map[string]interface{}{
+		appOptions.TitleVariables = map[string]any{
 			"command":  args[0],
 			"argv":     args[1:],
 			"hostname": hostname,
