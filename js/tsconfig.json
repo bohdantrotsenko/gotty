@@ -5,12 +5,13 @@
     "noUnusedLocals" : true,
     "noImplicitThis": true,
     "alwaysStrict": true,
+    "skipLibCheck": true,
     "outDir": "./dist/",
+    "rootDir": "./src",
     "declaration": true,
     "sourceMap": true,
-    "target": "es5",
+    "target": "es2017",
     "module": "commonJS",
-    "baseUrl": ".",
     "paths": {
       "*": ["./typings/*"]
     }

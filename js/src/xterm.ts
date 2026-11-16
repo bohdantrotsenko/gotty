@@ -15,7 +15,7 @@ export class Xterm {
 
   message: HTMLElement;
   messageTimeout: number;
-  messageTimer: ReturnType<typeof setTimeout>;
+  messageTimer!: ReturnType<typeof setTimeout>;
 
   fitAddon: FitAddon;
   disposables: IDisposable[] = [];

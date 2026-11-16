@@ -6,11 +6,11 @@ export class Hterm {
     term: bare.hterm.Terminal;
     io: bare.hterm.IO;
 
-    columns: number;
-    rows: number;
+    columns!: number;
+    rows!: number;
 
     // to "show" the current message when removeMessage() is called
-    message: string;
+    message!: string;
 
     constructor(elem: HTMLElement) {
         this.elem = elem;
@@ -54,7 +54,7 @@ export class Hterm {
     setPreferences(value: object) {
         Object.keys(value).forEach((key) => {
             if (key != "enable-webgl") {
-                this.term.getPrefs().set(key, value[key]);
+                this.term.getPrefs().set(key, (value as Record<string, string>)[key]);
             }
         });
     };
